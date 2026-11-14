@@ -1,6 +1,7 @@
 import asyncio
 import os
 import html
+import json
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -41,10 +42,30 @@ prices_collection = db['prices']
 # ----------------- HELPER FUNCTIONS -----------------
 
 def parse_cookie_string(cookie_str):
+    """JSON ഫോർമാറ്റിലുള്ളതും സാധാരണ സ്ട്രിംഗ് ഫോർമാറ്റിലുള്ളതുമായ കുക്കികൾ വായിക്കുന്നു"""
     cookies = []
+    cookie_str = cookie_str.strip()
+    
+    # 1. യൂസർ അയച്ചത് JSON ആണെങ്കിൽ അത് വായിക്കാനുള്ള കോഡ്
+    if cookie_str.startswith("[") and cookie_str.endswith("]"):
+        try:
+            json_cookies = json.loads(cookie_str)
+            for c in json_cookies:
+                if 'name' in c and 'value' in c:
+                    cookies.append({
+                        "name": c['name'],
+                        "value": c['value'],
+                        "domain": ".amazon.in",
+                        "path": "/"
+                    })
+            return cookies
+        except Exception as e:
+            print(f"JSON Cookie Parse Error: {e}")
+            
+    # 2. യൂസർ അയച്ചത് സാധാരണ String ആണെങ്കിൽ അത് വായിക്കാനുള്ള കോഡ്
     if cookie_str.lower().startswith("cookie:"):
         cookie_str = cookie_str[7:]
-    
+        
     parts = cookie_str.split(';')
     for part in parts:
         if '=' in part:
@@ -117,9 +138,12 @@ async def send_welcome(message: types.Message):
 @dp.callback_query(lambda c: c.data == 'set_cookie')
 async def process_callback_set_cookie(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
-    await bot.send_message(callback_query.from_user.id, "നിങ്ങളുടെ ലൊക്കേഷൻ Cookie താഴെ പേസ്റ്റ് ചെയ്യുക:\n\n(session-id=... എന്ന് തുടങ്ങുന്ന ടെക്സ്റ്റ്)")
+    await bot.send_message(
+        callback_query.from_user.id, 
+        "നിങ്ങളുടെ ലൊക്കേഷൻ Cookie താഴെ പേസ്റ്റ് ചെയ്യുക:\n\n(EditThisCookie പോലെയുള്ള എക്സ്റ്റൻഷൻ വഴിയോ, അല്ലാതെ തന്നെയോ എടുക്കുന്ന Cookie ഇവിടെ നൽകാം)"
+    )
 
-@dp.message(lambda message: message.text and "session-id" in message.text.lower())
+@dp.message(lambda message: message.text and ("session-id" in message.text.lower() or message.text.strip().startswith("[")))
 async def save_user_cookie(message: types.Message):
     user_id = message.from_user.id
     cookie_data = message.text
@@ -152,6 +176,7 @@ async def run_scraper_loop():
                     parsed_cookies = parse_cookie_string(cookie_text)
                     
                     if not parsed_cookies:
+                        print(f"User {user_id} ന്റെ കുക്കി വായിക്കാൻ കഴിഞ്ഞില്ല.")
                         continue
 
                     user_db_record = await prices_collection.find_one({"user_id": user_id})
