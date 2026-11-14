@@ -7,11 +7,16 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from motor.motor_asyncio import AsyncIOMotorClient
 from playwright.async_api import async_playwright
 
-# ----------------- കോൺഫിഗറേഷൻ (Render Environment Variables) -----------------
-# Render-ൽ ഡിപ്ലോയ് ചെയ്യുമ്പോൾ ഈ ടോക്കണുകൾ Environment Variables ആയി കൊടുക്കുന്നതാണ് സുരക്ഷിതം. 
-BOT_TOKEN = os.environ.get('BOT_TOKEN', '9190242279:AAEsAnht_kUykHnerqeTfwoLp8Lb3PZiK7U')
-MONGO_URI = os.environ.get('MONGO_URI', 'mongodb+srv://nikhil4fx_db_user:2B8qKm4kwS9X4bwR@cluster0.pp40quf.mongodb.net/?retryWrites=true&w=majority')
-AMAZON_AFFILIATE_TAG = os.environ.get('AFFILIATE_TAG', 'flashsale069-21')
+# ----------------- ENVIRONMENT VARIABLES -----------------
+# Render-ൽ നിന്നും ടോക്കണുകൾ എടുക്കുന്നു. ഇവിടെ നേരിട്ട് കൊടുക്കേണ്ടതില്ല.
+BOT_TOKEN = os.environ.get('BOT_TOKEN')
+MONGO_URI = os.environ.get('MONGO_URI')
+AMAZON_AFFILIATE_TAG = os.environ.get('AFFILIATE_TAG', '')
+
+# ടോക്കണുകൾ കൊടുക്കാൻ മറന്നാൽ പ്രോഗ്രാം അവിടെവെച്ച് നിർത്തും
+if not BOT_TOKEN or not MONGO_URI:
+    print("❌ ERROR: BOT_TOKEN or MONGO_URI is missing in Environment Variables!")
+    exit(1)
 
 AMAZON_NOW_URLS = [
     "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=204924538031&title=Beverages",
@@ -22,7 +27,6 @@ AMAZON_NOW_URLS = [
     "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=204869998031&title=Dairy+%26+Bread",
     "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=220619214031&title=Fruits",
     "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=218833871031&title=Vegetables"
-    # ആവശ്യമെങ്കിൽ ബാക്കി ലിങ്കുകൾ കൂടി ഇവിടെ ചേർക്കാം...
 ]
 
 bot = Bot(token=BOT_TOKEN)
@@ -32,12 +36,11 @@ dp = Dispatcher()
 client = AsyncIOMotorClient(MONGO_URI)
 db = client['AmazonDealsBot']
 users_collection = db['users']
-prices_collection = db['prices'] # ഓരോ യൂസറിന്റെയും പ്രൈസ് ട്രാക്ക് ചെയ്യാൻ
+prices_collection = db['prices']
 
 # ----------------- HELPER FUNCTIONS -----------------
 
 def parse_cookie_string(cookie_str):
-    """യൂസർ നൽകുന്ന കുക്കി ടെക്സ്റ്റിനെ Playwright ഫോർമാറ്റിലേക്ക് മാറ്റുന്നു"""
     cookies = []
     if cookie_str.lower().startswith("cookie:"):
         cookie_str = cookie_str[7:]
@@ -55,7 +58,6 @@ def parse_cookie_string(cookie_str):
     return cookies
 
 async def send_telegram_alert(user_id, title, new_price, old_price, link, img_url="", mrp=0, is_mega_deal=False):
-    """ഒരു പ്രത്യേക യൂസറിന് ഡീൽ അലേർട്ട് അയക്കുന്നു"""
     safe_title = html.escape(title)
     safe_link = html.escape(link)
     
@@ -86,7 +88,6 @@ async def send_telegram_alert(user_id, title, new_price, old_price, link, img_ur
             await bot.send_message(chat_id=user_id, text=message, parse_mode="HTML", disable_web_page_preview=False)
     except Exception as e:
         print(f"Error sending alert to {user_id}: {e}")
-        # ഫോട്ടോ അയക്കാൻ പറ്റിയില്ലെങ്കിൽ ടെക്സ്റ്റ് ആയി അയക്കാൻ ശ്രമിക്കുന്നു
         try:
             await bot.send_message(chat_id=user_id, text=message, parse_mode="HTML", disable_web_page_preview=False)
         except:
@@ -129,7 +130,7 @@ async def save_user_cookie(message: types.Message):
 # ----------------- BACKGROUND MULTI-USER SCRAPER -----------------
 
 async def run_scraper_loop():
-    await asyncio.sleep(5) # ബോട്ട് സ്റ്റാർട്ട് ആയി കുറച്ചു നേരം കാത്തിരിക്കുന്നു
+    await asyncio.sleep(5) 
     
     while True:
         users = await users_collection.find({"cookie": {"$ne": None}}).to_list(length=None)
@@ -153,7 +154,6 @@ async def run_scraper_loop():
                     if not parsed_cookies:
                         continue
 
-                    # ഈ യൂസറിന്റെ മുൻപത്തെ പ്രൈസുകൾ ഡാറ്റാബേസിൽ നിന്നും എടുക്കുന്നു
                     user_db_record = await prices_collection.find_one({"user_id": user_id})
                     user_price_db = user_db_record['products'] if user_db_record else {}
                     updated_user_db = {}
@@ -174,7 +174,6 @@ async def run_scraper_loop():
                                 await page.evaluate("window.scrollBy(0, 1000);")
                                 await asyncio.sleep(2)
                                 
-                                # താങ്കളുടെ ഒറിജിനൽ JS Script
                                 js_script = """
                                 () => {
                                     let results = {};
@@ -279,7 +278,6 @@ async def run_scraper_loop():
                         
                         await context.close()
                         
-                        # യൂസറിന്റെ പുതിയ പ്രൈസുകൾ ഡാറ്റാബേസിൽ സേവ് ചെയ്യുന്നു
                         user_price_db.update(updated_user_db)
                         await prices_collection.update_one(
                             {"user_id": user_id}, 
@@ -287,7 +285,7 @@ async def run_scraper_loop():
                             upsert=True
                         )
                         
-                        await asyncio.sleep(3) # അടുത്ത യൂസറിലേക്ക് പോകുന്നതിന് മുൻപ് ബ്രേക്ക്
+                        await asyncio.sleep(3) 
                         
                     except Exception as e:
                         print(f"Error processing user {user_id}: {e}")
@@ -297,13 +295,13 @@ async def run_scraper_loop():
             print(f"Browser Launch Error: {e}")
             
         print("✅ എല്ലാ യൂസർമാരുടെയും സ്കാനിങ് കഴിഞ്ഞു. അടുത്ത സ്കാനിങ്ങിനായി 15 മിനിറ്റ് കാത്തിരിക്കുന്നു...")
-        await asyncio.sleep(900)  # 15 മിനിറ്റ് (900 സെക്കൻഡ്)
+        await asyncio.sleep(900)
 
 # ----------------- MAIN ENTRY POINT -----------------
 
 async def main():
     print("🤖 Multi-User Bot is starting...")
-    asyncio.create_task(run_scraper_loop()) # സ്ക്രാപ്പർ ബാക്ക്ഗ്രൗണ്ടിൽ റൺ ചെയ്യാൻ തുടങ്ങുന്നു
+    asyncio.create_task(run_scraper_loop())
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
