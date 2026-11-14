@@ -7,14 +7,13 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from motor.motor_asyncio import AsyncIOMotorClient
 from playwright.async_api import async_playwright
+from aiohttp import web
 
 # ----------------- ENVIRONMENT VARIABLES -----------------
-# Render-ൽ നിന്നും ടോക്കണുകൾ എടുക്കുന്നു. ഇവിടെ നേരിട്ട് കൊടുക്കേണ്ടതില്ല.
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 MONGO_URI = os.environ.get('MONGO_URI')
 AMAZON_AFFILIATE_TAG = os.environ.get('AFFILIATE_TAG', '')
 
-# ടോക്കണുകൾ കൊടുക്കാൻ മറന്നാൽ പ്രോഗ്രാം അവിടെവെച്ച് നിർത്തും
 if not BOT_TOKEN or not MONGO_URI:
     print("❌ ERROR: BOT_TOKEN or MONGO_URI is missing in Environment Variables!")
     exit(1)
@@ -39,30 +38,23 @@ db = client['AmazonDealsBot']
 users_collection = db['users']
 prices_collection = db['prices']
 
+
 # ----------------- HELPER FUNCTIONS -----------------
 
 def parse_cookie_string(cookie_str):
-    """JSON ഫോർമാറ്റിലുള്ളതും സാധാരണ സ്ട്രിംഗ് ഫോർമാറ്റിലുള്ളതുമായ കുക്കികൾ വായിക്കുന്നു"""
     cookies = []
     cookie_str = cookie_str.strip()
     
-    # 1. യൂസർ അയച്ചത് JSON ആണെങ്കിൽ അത് വായിക്കാനുള്ള കോഡ്
     if cookie_str.startswith("[") and cookie_str.endswith("]"):
         try:
             json_cookies = json.loads(cookie_str)
             for c in json_cookies:
                 if 'name' in c and 'value' in c:
-                    cookies.append({
-                        "name": c['name'],
-                        "value": c['value'],
-                        "domain": ".amazon.in",
-                        "path": "/"
-                    })
+                    cookies.append({"name": c['name'], "value": c['value'], "domain": ".amazon.in", "path": "/"})
             return cookies
         except Exception as e:
             print(f"JSON Cookie Parse Error: {e}")
             
-    # 2. യൂസർ അയച്ചത് സാധാരണ String ആണെങ്കിൽ അത് വായിക്കാനുള്ള കോഡ്
     if cookie_str.lower().startswith("cookie:"):
         cookie_str = cookie_str[7:]
         
@@ -70,12 +62,7 @@ def parse_cookie_string(cookie_str):
     for part in parts:
         if '=' in part:
             k, v = part.split('=', 1)
-            cookies.append({
-                "name": k.strip(),
-                "value": v.strip(),
-                "domain": ".amazon.in",
-                "path": "/"
-            })
+            cookies.append({"name": k.strip(), "value": v.strip(), "domain": ".amazon.in", "path": "/"})
     return cookies
 
 async def send_telegram_alert(user_id, title, new_price, old_price, link, img_url="", mrp=0, is_mega_deal=False):
@@ -108,11 +95,11 @@ async def send_telegram_alert(user_id, title, new_price, old_price, link, img_ur
         else:
             await bot.send_message(chat_id=user_id, text=message, parse_mode="HTML", disable_web_page_preview=False)
     except Exception as e:
-        print(f"Error sending alert to {user_id}: {e}")
+        print(f"Error sending alert: {e}")
         try:
             await bot.send_message(chat_id=user_id, text=message, parse_mode="HTML", disable_web_page_preview=False)
-        except:
-            pass
+        except: pass
+
 
 # ----------------- TELEGRAM BOT COMMANDS -----------------
 
@@ -123,75 +110,55 @@ async def send_welcome(message: types.Message):
     
     user_exists = await users_collection.find_one({"user_id": user_id})
     if not user_exists:
-        await users_collection.insert_one({
-            "user_id": user_id,
-            "name": first_name,
-            "cookie": None
-        })
+        await users_collection.insert_one({"user_id": user_id, "name": first_name, "cookie": None})
     
     welcome_text = f"ഹലോ {first_name}!\nAmazon Fresh/Now ലൊക്കേഷൻ ഡീലുകൾ അറിയാൻ താഴെയുള്ള ബട്ടണിൽ ക്ലിക്ക് ചെയ്ത് Cookie സെറ്റ് ചെയ്യുക."
-    markup = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🍪 Set Location Cookie", callback_data="set_cookie")]
-    ])
+    markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🍪 Set Location Cookie", callback_data="set_cookie")]])
     await message.answer(welcome_text, reply_markup=markup)
 
 @dp.callback_query(lambda c: c.data == 'set_cookie')
 async def process_callback_set_cookie(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
-    await bot.send_message(
-        callback_query.from_user.id, 
-        "നിങ്ങളുടെ ലൊക്കേഷൻ Cookie താഴെ പേസ്റ്റ് ചെയ്യുക:\n\n(EditThisCookie പോലെയുള്ള എക്സ്റ്റൻഷൻ വഴിയോ, അല്ലാതെ തന്നെയോ എടുക്കുന്ന Cookie ഇവിടെ നൽകാം)"
-    )
+    await bot.send_message(callback_query.from_user.id, "നിങ്ങളുടെ ലൊക്കേഷൻ Cookie താഴെ പേസ്റ്റ് ചെയ്യുക:")
 
 @dp.message(lambda message: message.text and ("session-id" in message.text.lower() or message.text.strip().startswith("[")))
 async def save_user_cookie(message: types.Message):
     user_id = message.from_user.id
     cookie_data = message.text
-    
     await users_collection.update_one({"user_id": user_id}, {"$set": {"cookie": cookie_data}})
     await message.answer("✅ നിങ്ങളുടെ Cookie വിജയകരമായി സെറ്റ് ചെയ്തു! സ്കാനിങ് ഉടൻ ആരംഭിക്കുന്നതായിരിക്കും.")
+
 
 # ----------------- BACKGROUND MULTI-USER SCRAPER -----------------
 
 async def run_scraper_loop():
     await asyncio.sleep(5) 
-    
     while True:
         users = await users_collection.find({"cookie": {"$ne": None}}).to_list(length=None)
-        
         if not users:
             print("കുക്കി നൽകിയ യൂസർമാർ ആരുമില്ല. 1 മിനിറ്റ് കാത്തിരിക്കുന്നു...")
             await asyncio.sleep(60)
             continue
 
         print(f"🔍 {len(users)} യൂസർമാർക്കായി സ്കാനിങ് തുടങ്ങുന്നു...")
-        
         try:
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True, args=['--no-sandbox'])
-                
                 for user in users:
                     user_id = user['user_id']
                     cookie_text = user['cookie']
                     parsed_cookies = parse_cookie_string(cookie_text)
-                    
-                    if not parsed_cookies:
-                        print(f"User {user_id} ന്റെ കുക്കി വായിക്കാൻ കഴിഞ്ഞില്ല.")
-                        continue
+                    if not parsed_cookies: continue
 
                     user_db_record = await prices_collection.find_one({"user_id": user_id})
                     user_price_db = user_db_record['products'] if user_db_record else {}
                     updated_user_db = {}
                     
                     try:
-                        context = await browser.new_context(
-                            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                        )
+                        context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                         context.set_default_timeout(60000)
                         await context.add_cookies(parsed_cookies)
-                        
                         page = await context.new_page()
-                        print(f"Scanning for User ID: {user_id}")
                         
                         for url in AMAZON_NOW_URLS:
                             try:
@@ -202,26 +169,21 @@ async def run_scraper_loop():
                                 js_script = """
                                 () => {
                                     let results = {};
-                                    let elements = Array.from(document.querySelectorAll('span, div, p'))
-                                        .filter(el => el.children.length === 0 && el.innerText && el.innerText.includes('₹'));
+                                    let elements = Array.from(document.querySelectorAll('span, div, p')).filter(el => el.children.length === 0 && el.innerText && el.innerText.includes('₹'));
                                     let processedCards = new Set();
                                     elements.forEach(el => {
-                                        let card = el;
-                                        let attempts = 0;
+                                        let card = el; let attempts = 0;
                                         while(card.parentElement && attempts < 10) {
                                             let parent = card.parentElement;
                                             if(parent.querySelectorAll('img').length > 1 || parent.innerText.length > 350) break; 
                                             card = parent; attempts++;
                                         }
-                                        if(processedCards.has(card)) return;
-                                        processedCards.add(card);
-                                        let text = card.innerText;
-                                        if(!text || text.length > 350) return;
+                                        if(processedCards.has(card)) return; processedCards.add(card);
+                                        let text = card.innerText; if(!text || text.length > 350) return;
                                         let lines = text.split('\\n').map(l => l.trim()).filter(l => l.length > 0);
                                         let allPrices = [...text.matchAll(/₹\\s*([0-9,]+(?:\\.[0-9]+)?)/g)].map(m => parseFloat(m[1].replace(/,/g, '')));
                                         if(allPrices.length === 0) return;
-                                        let price = allPrices[0];
-                                        let mrp = allPrices.length > 1 ? Math.max(...allPrices) : price;
+                                        let price = allPrices[0]; let mrp = allPrices.length > 1 ? Math.max(...allPrices) : price;
                                         let title = ""; let titleIndex = -1;
                                         for(let i=0; i<lines.length; i++) {
                                             let lower = lines[i].toLowerCase();
@@ -231,9 +193,7 @@ async def run_scraper_loop():
                                         if (title) {
                                             if(titleIndex !== -1 && titleIndex + 1 < lines.length) {
                                                 let nextLine = lines[titleIndex + 1];
-                                                if(nextLine.length > 1 && nextLine.length < 15 && !nextLine.includes('₹') && !nextLine.includes('%')) {
-                                                    title = title + " (" + nextLine + ")";
-                                                }
+                                                if(nextLine.length > 1 && nextLine.length < 15 && !nextLine.includes('₹') && !nextLine.includes('%')) title = title + " (" + nextLine + ")";
                                             }
                                             let imgNode = null; let searchNode = card;
                                             for(let i=0; i<4; i++) {
@@ -249,9 +209,7 @@ async def run_scraper_loop():
                                             let linkEl = card.querySelector('a');
                                             let link = (linkEl && linkEl.href && !linkEl.href.includes('javascript') && !linkEl.href.endsWith('/')) ? linkEl.href : "https://www.amazon.in/s?k=" + encodeURIComponent(title);
                                             let uid = title.toLowerCase().replace(/[^a-z0-9]/g, '');
-                                            if(uid.length > 5) {
-                                                results[uid] = { title: title, price: price, mrp: mrp, link: link, img: imgUrl };
-                                            }
+                                            if(uid.length > 5) results[uid] = { title: title, price: price, mrp: mrp, link: link, img: imgUrl };
                                         }
                                     });
                                     return results;
@@ -260,73 +218,66 @@ async def run_scraper_loop():
                                 extracted_products = await page.evaluate(js_script)
                                 
                                 for uid, data in extracted_products.items():
-                                    title = data['title']
-                                    new_price = data['price']
-                                    mrp = data['mrp']
-                                    link = data['link']
-                                    img_url = data['img']
-
-                                    if AMAZON_AFFILIATE_TAG:
-                                        separator = "&" if "?" in link else "?"
-                                        link = f"{link}{separator}tag={AMAZON_AFFILIATE_TAG}"
-
+                                    title = data['title']; new_price = data['price']; mrp = data['mrp']; link = data['link']; img_url = data['img']
+                                    if AMAZON_AFFILIATE_TAG: link = f"{link}{'&' if '?' in link else '?'}tag={AMAZON_AFFILIATE_TAG}"
                                     discount_pct = round(((mrp - new_price) / mrp) * 100) if mrp > new_price else 0
                                     mega_alert_sent = False
 
                                     if uid in user_price_db:
                                         old_price = user_price_db[uid]['price']
                                         mega_alert_sent = user_price_db[uid].get('mega_alert_sent', False)
-                                        
                                         if new_price < old_price:
-                                            if discount_pct >= 50:
-                                                await send_telegram_alert(user_id, title, new_price, old_price, link, img_url, mrp, True)
-                                                mega_alert_sent = True
-                                            else:
-                                                await send_telegram_alert(user_id, title, new_price, old_price, link, img_url)
-                                                mega_alert_sent = False
-                                        elif new_price == old_price:
-                                            if discount_pct >= 50 and not mega_alert_sent:
-                                                await send_telegram_alert(user_id, title, new_price, old_price, link, img_url, mrp, True)
-                                                mega_alert_sent = True
+                                            is_mega = discount_pct >= 50
+                                            await send_telegram_alert(user_id, title, new_price, old_price, link, img_url, mrp, is_mega)
+                                            mega_alert_sent = is_mega
+                                        elif new_price == old_price and discount_pct >= 50 and not mega_alert_sent:
+                                            await send_telegram_alert(user_id, title, new_price, old_price, link, img_url, mrp, True)
+                                            mega_alert_sent = True
                                     else:
                                         if discount_pct >= 50:
                                             await send_telegram_alert(user_id, title, new_price, mrp, link, img_url, mrp, True)
                                             mega_alert_sent = True
                                     
-                                    updated_user_db[uid] = {
-                                        "price": new_price, 
-                                        "mega_alert_sent": mega_alert_sent
-                                    }
-                            except Exception as inner_e:
-                                print(f"URL Error for {user_id}: {inner_e}")
-                                continue
-                        
+                                    updated_user_db[uid] = {"price": new_price, "mega_alert_sent": mega_alert_sent}
+                            except Exception as inner_e: print(f"URL Error: {inner_e}"); continue
                         await context.close()
-                        
                         user_price_db.update(updated_user_db)
-                        await prices_collection.update_one(
-                            {"user_id": user_id}, 
-                            {"$set": {"products": user_price_db}}, 
-                            upsert=True
-                        )
-                        
+                        await prices_collection.update_one({"user_id": user_id}, {"$set": {"products": user_price_db}}, upsert=True)
                         await asyncio.sleep(3) 
-                        
-                    except Exception as e:
-                        print(f"Error processing user {user_id}: {e}")
-                
+                    except Exception as e: print(f"User Error: {e}")
                 await browser.close()
-        except Exception as e:
-            print(f"Browser Launch Error: {e}")
-            
-        print("✅ എല്ലാ യൂസർമാരുടെയും സ്കാനിങ് കഴിഞ്ഞു. അടുത്ത സ്കാനിങ്ങിനായി 15 മിനിറ്റ് കാത്തിരിക്കുന്നു...")
+        except Exception as e: print(f"Browser Error: {e}")
+        print("✅ അടുത്ത സ്കാനിങ്ങിനായി കാത്തിരിക്കുന്നു...")
         await asyncio.sleep(900)
 
-# ----------------- MAIN ENTRY POINT -----------------
+# ----------------- WEB SERVER (To Keep Render Awake) -----------------
+async def handle_ping(request):
+    return web.Response(text="Bot is awake and running!")
 
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    # Render-ൽ പോർട്ട് 10000 ആയിരിക്കും ഡിഫോൾട്ട്
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    print(f"🌐 Web server started on port {port}")
+
+
+# ----------------- MAIN ENTRY POINT -----------------
 async def main():
     print("🤖 Multi-User Bot is starting...")
+    
+    # വെബ് സെർവർ സ്റ്റാർട്ട് ചെയ്യുന്നു
+    await start_web_server()
+    
+    # സ്ക്രാപ്പർ ബാക്ക്ഗ്രൗണ്ടിൽ റൺ ചെയ്യുന്നു
     asyncio.create_task(run_scraper_loop())
+    
+    # ബോട്ട് മെസ്സേജുകൾക്കായി കാത്തിരിക്കുന്നു
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
