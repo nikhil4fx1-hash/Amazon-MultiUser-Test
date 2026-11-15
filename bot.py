@@ -2,6 +2,7 @@ import asyncio
 import os
 import html
 import json
+import random
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
@@ -104,10 +105,15 @@ async def run_scraper_loop():
             print(f"🔍 {len(users)} യൂസർമാർക്കായി സ്കാനിങ് തുടങ്ങുന്നു...")
             
             async with async_playwright() as p:
-                # ആമസോൺ ട്രാഫിക് ബ്ലോക്ക് ഒഴിവാക്കാൻ കൂടുതൽ ഹ്യൂമൻ-ലൈക്ക് സെറ്റിങ്സ്
                 browser = await p.chromium.launch(
                     headless=True, 
-                    args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--disable-blink-features=AutomationControlled']
+                    args=[
+                        '--no-sandbox', 
+                        '--disable-dev-shm-usage', 
+                        '--disable-gpu', 
+                        '--disable-blink-features=AutomationControlled',
+                        '--window-size=1920,1080'
+                    ]
                 )
                 
                 for user in users:
@@ -121,22 +127,34 @@ async def run_scraper_loop():
                     
                     try:
                         context = await browser.new_context(
-                            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                            viewport={'width': 1280, 'height': 800}
+                            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                            viewport={'width': 1920, 'height': 1080}
                         )
+                        # ബോട്ട് അല്ലെന്ന് ആമസോണിനെ വിശ്വസിപ്പിക്കാനുള്ള പ്രധാന കോഡ്
+                        await context.add_init_script("""
+                            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                        """)
                         context.set_default_timeout(90000)
                         await context.add_cookies(parsed_cookies)
                         page = await context.new_page()
                         
                         for url in AMAZON_NOW_URLS:
                             try:
-                                # കൂടുതൽ സമയമെടുത്ത് പേജ് ലോഡ് ചെയ്യുന്നു
-                                await page.goto(url, wait_until="domcontentloaded")
-                                await asyncio.sleep(4)
+                                # റാൻഡം ഡിലേ നൽകുന്നു (6 മുതൽ 12 സെക്കൻഡ് വരെ)
+                                await asyncio.sleep(random.uniform(6.0, 12.0))
                                 
-                                # പ്രൊഡക്റ്റുകൾ കാണാൻ പതുക്കെ താഴേക്ക് സ്ക്രോൾ ചെയ്യുന്നു
+                                await page.goto(url, wait_until="domcontentloaded")
+                                await asyncio.sleep(random.uniform(3.0, 6.0))
+                                
+                                # Oops എറർ പേജ് ആണോ എന്ന് പരിശോധിക്കുന്നു
+                                page_content = await page.content()
+                                if "rush hour and traffic is piling up" in page_content or "Oops!" in page_content:
+                                    print("⚠️ Amazon Traffic Block detected! Waiting 30 seconds...")
+                                    await asyncio.sleep(30)
+                                    continue # ഈ കാറ്റഗറി സ്കിപ്പ് ചെയ്ത് അടുത്തതിലേക്ക് പോകുന്നു
+                                
                                 await page.evaluate("window.scrollBy(0, 1500);")
-                                await asyncio.sleep(5)
+                                await asyncio.sleep(random.uniform(2.0, 5.0))
                                 await page.evaluate("window.scrollBy(0, 1500);")
                                 await asyncio.sleep(3)
                                 
@@ -187,7 +205,6 @@ async def run_scraper_loop():
                                 """
                                 extracted_products = await page.evaluate(js_script)
                                 
-                                # സ്ക്രീൻഷോട്ട് വീണ്ടും വരികയാണെങ്കിൽ അത് അയക്കുന്നു
                                 if not extracted_products:
                                     try:
                                         screenshot_path = "debug_screenshot.png"
@@ -222,8 +239,6 @@ async def run_scraper_loop():
                         user_price_db.update(updated_user_db)
                         await prices_collection.update_one({"user_id": user_id}, {"$set": {"products": user_price_db}}, upsert=True)
                         
-                        # അടുത്ത പേജിലേക്ക് പോകുന്നതിന് മുൻപ് കൂടുതൽ സമയം നൽകുന്നു (ആമസോൺ ബ്ലോക്ക് ഒഴിവാക്കാൻ)
-                        await asyncio.sleep(8) 
                     except Exception as e: print(f"User Error: {e}")
                 
                 await browser.close()
