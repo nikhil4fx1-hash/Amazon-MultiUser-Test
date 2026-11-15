@@ -32,12 +32,10 @@ AMAZON_NOW_URLS = [
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# ഡാറ്റാബേസ് കണക്ഷൻ
 client = AsyncIOMotorClient(MONGO_URI)
 db = client['AmazonDealsBot']
 users_collection = db['users']
 prices_collection = db['prices']
-
 
 # ----------------- HELPER FUNCTIONS -----------------
 
@@ -94,12 +92,10 @@ async def send_telegram_alert(user_id, title, new_price, old_price, link, img_ur
             await bot.send_photo(chat_id=user_id, photo=img_url, caption=message, parse_mode="HTML")
         else:
             await bot.send_message(chat_id=user_id, text=message, parse_mode="HTML", disable_web_page_preview=False)
-    except Exception as e:
-        print(f"Error sending alert: {e}")
+    except Exception:
         try:
             await bot.send_message(chat_id=user_id, text=message, parse_mode="HTML", disable_web_page_preview=False)
         except: pass
-
 
 # ----------------- TELEGRAM BOT COMMANDS -----------------
 
@@ -132,18 +128,24 @@ async def save_user_cookie(message: types.Message):
 # ----------------- BACKGROUND MULTI-USER SCRAPER -----------------
 
 async def run_scraper_loop():
-    await asyncio.sleep(5) 
+    await asyncio.sleep(10) 
+    
     while True:
-        users = await users_collection.find({"cookie": {"$ne": None}}).to_list(length=None)
-        if not users:
-            print("കുക്കി നൽകിയ യൂസർമാർ ആരുമില്ല. 1 മിനിറ്റ് കാത്തിരിക്കുന്നു...")
-            await asyncio.sleep(60)
-            continue
-
-        print(f"🔍 {len(users)} യൂസർമാർക്കായി സ്കാനിങ് തുടങ്ങുന്നു...")
         try:
+            users = await users_collection.find({"cookie": {"$ne": None}}).to_list(length=None)
+            if not users:
+                print("കുക്കി നൽകിയ യൂസർമാർ ആരുമില്ല. 1 മിനിറ്റ് കാത്തിരിക്കുന്നു...")
+                await asyncio.sleep(60)
+                continue
+
+            print(f"🔍 {len(users)} യൂസർമാർക്കായി സ്കാനിങ് തുടങ്ങുന്നു...")
+            
             async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True, args=['--no-sandbox'])
+                browser = await p.chromium.launch(
+                    headless=True, 
+                    args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--disable-extensions']
+                )
+                
                 for user in users:
                     user_id = user['user_id']
                     cookie_text = user['cookie']
@@ -245,8 +247,12 @@ async def run_scraper_loop():
                         await prices_collection.update_one({"user_id": user_id}, {"$set": {"products": user_price_db}}, upsert=True)
                         await asyncio.sleep(3) 
                     except Exception as e: print(f"User Error: {e}")
+                
                 await browser.close()
-        except Exception as e: print(f"Browser Error: {e}")
+                
+        except Exception as e:
+            print(f"⚠️ Critical Loop Error: {e}")
+            
         print("✅ അടുത്ത സ്കാനിങ്ങിനായി കാത്തിരിക്കുന്നു...")
         await asyncio.sleep(900)
 
@@ -260,7 +266,6 @@ async def start_web_server():
     runner = web.AppRunner(app)
     await runner.setup()
     
-    # Render-ൽ പോർട്ട് 10000 ആയിരിക്കും ഡിഫോൾട്ട്
     port = int(os.environ.get("PORT", 10000))
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
@@ -270,14 +275,8 @@ async def start_web_server():
 # ----------------- MAIN ENTRY POINT -----------------
 async def main():
     print("🤖 Multi-User Bot is starting...")
-    
-    # വെബ് സെർവർ സ്റ്റാർട്ട് ചെയ്യുന്നു
     await start_web_server()
-    
-    # സ്ക്രാപ്പർ ബാക്ക്ഗ്രൗണ്ടിൽ റൺ ചെയ്യുന്നു
     asyncio.create_task(run_scraper_loop())
-    
-    # ബോട്ട് മെസ്സേജുകൾക്കായി കാത്തിരിക്കുന്നു
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
