@@ -31,8 +31,6 @@ AMAZON_NOW_URLS = [
     "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=218833871031&title=Vegetables"
 ]
 
-TUTORIAL_VIDEO_LINK = "https://youtu.be/YOUR_VIDEO_LINK_HERE" 
-
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
@@ -53,19 +51,15 @@ def parse_cookie_string(cookie_str):
                 if 'name' in c and 'value' in c:
                     cookies.append({"name": str(c['name']), "value": str(c['value']), "domain": ".amazon.in", "path": "/"})
             return cookies
-        except Exception as e:
-            print(f"JSON Parse Error (Likely truncated message): {e}")
-            return [] # ക്രാഷ് ഒഴിവാക്കാൻ മുറിഞ്ഞ ഡാറ്റ തള്ളിക്കളയുന്നു
+        except: return []
             
     if cookie_str.lower().startswith("cookie:"): cookie_str = cookie_str[7:]
     parts = cookie_str.split(';')
     for part in parts:
         if '=' in part:
             k, v = part.split('=', 1)
-            k = k.strip()
-            v = v.strip()
-            # തെറ്റായ ഡാറ്റ വന്ന് ക്രാഷ് ആകാതിരിക്കാനുള്ള സുരക്ഷ
-            if k and "{" not in k and "[" not in k and '"' not in k and " " not in k:
+            k = k.strip(); v = v.strip()
+            if k and "{" not in k and "[" not in k and '"' not in k:
                 cookies.append({"name": k, "value": v, "domain": ".amazon.in", "path": "/"})
     return cookies
 
@@ -150,13 +144,6 @@ async def save_user_cookie(message: types.Message):
 async def run_scraper_loop():
     await asyncio.sleep(10) 
     
-    proxies = [
-        "http://20.198.118.51:3128",
-        "http://20.198.116.14:3128",
-        "http://103.111.134.195:80",
-        "http://103.88.236.4:80"
-    ]
-    
     while True:
         try:
             users = await users_collection.find({"cookie": {"$ne": None}}).to_list(length=None)
@@ -165,25 +152,17 @@ async def run_scraper_loop():
                 continue
 
             print(f"🔍 Scanning started for {len(users)} users...")
-            proxy = random.choice(proxies)
-            print(f"🌐 Using Proxy: {proxy}")
 
             async with async_playwright() as p:
-                try:
-                    browser = await p.chromium.launch(
-                        headless=True, 
-                        proxy={"server": proxy},
-                        args=[
-                            '--no-sandbox', 
-                            '--disable-dev-shm-usage', 
-                            '--disable-gpu', 
-                            '--disable-blink-features=AutomationControlled'
-                        ]
-                    )
-                except Exception as e:
-                    print(f"Proxy Connection Error: {e}")
-                    await asyncio.sleep(30)
-                    continue
+                browser = await p.chromium.launch(
+                    headless=True, 
+                    args=[
+                        '--no-sandbox', 
+                        '--disable-dev-shm-usage', 
+                        '--disable-gpu', 
+                        '--disable-blink-features=AutomationControlled'
+                    ]
+                )
                 
                 for user in users:
                     user_id = user['user_id']
@@ -199,12 +178,7 @@ async def run_scraper_loop():
                             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
                             viewport={'width': 1920, 'height': 1080},
                             locale='en-IN',
-                            timezone_id='Asia/Kolkata',
-                            extra_http_headers={
-                                'Accept-Language': 'en-IN,en;q=0.9',
-                                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                                'Upgrade-Insecure-Requests': '1'
-                            }
+                            timezone_id='Asia/Kolkata'
                         )
                         
                         await context.add_cookies(parsed_cookies)
@@ -213,9 +187,10 @@ async def run_scraper_loop():
                         
                         for url in AMAZON_NOW_URLS:
                             try:
-                                await asyncio.sleep(random.uniform(6.0, 10.0))
-                                await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                                await asyncio.sleep(random.uniform(3.0, 5.0))
+                                await asyncio.sleep(random.uniform(4.0, 7.0))
+                                # ടൈം ഔട്ട് പ്രശ്നം ഒഴിവാക്കാൻ സമയം 90 സെക്കൻഡ് ആയി കൂട്ടിയിരിക്കുന്നു
+                                await page.goto(url, wait_until="domcontentloaded", timeout=90000)
+                                await asyncio.sleep(3)
                                 
                                 page_content = await page.content()
                                 if "rush hour and traffic is piling up" in page_content or "Oops!" in page_content:
@@ -224,9 +199,9 @@ async def run_scraper_loop():
                                     continue 
                                 
                                 await page.evaluate("window.scrollBy(0, 1500);")
-                                await asyncio.sleep(random.uniform(2.0, 4.0))
+                                await asyncio.sleep(2)
                                 await page.evaluate("window.scrollBy(0, 1500);")
-                                await asyncio.sleep(3)
+                                await asyncio.sleep(2)
                                 
                                 js_script = """
                                 () => {
@@ -274,13 +249,6 @@ async def run_scraper_loop():
                                 }
                                 """
                                 extracted_products = await page.evaluate(js_script)
-                                
-                                if not extracted_products:
-                                    try:
-                                        screenshot_path = "debug_screenshot.png"
-                                        await page.screenshot(path=screenshot_path)
-                                        await bot.send_photo(chat_id=user_id, photo=FSInputFile(screenshot_path), caption=f"⚠️ Products did not load on this page:\n{url}")
-                                    except: pass
                                 
                                 for uid, data in extracted_products.items():
                                     title = data['title']; new_price = data['price']; mrp = data['mrp']; link = data['link']; img_url = data['img']
