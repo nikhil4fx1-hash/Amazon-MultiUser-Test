@@ -2,12 +2,13 @@ name: Run Amazon Scraper
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # ഓരോ 15 മിനിറ്റിലും ഒരു തവണ ഓടുന്നു
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 jobs:
   run-scraper:
     runs-on: ubuntu-latest
+    environment: Multi  # <- ഇത് ഇവിടെ കൃത്യമായി ചേർക്കണം (Image 4-ൽ കണ്ട എൻവയോൺമെന്റ് പേര്)
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
