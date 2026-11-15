@@ -45,20 +45,34 @@ prices_collection = db['prices']
 def parse_cookie_string(cookie_str):
     cookies = []
     cookie_str = cookie_str.strip()
+    
+    # JSON ഫോർമാറ്റ് ആണെങ്കിൽ (Export ചെയ്തത്)
     if cookie_str.startswith("[") and cookie_str.endswith("]"):
         try:
             json_cookies = json.loads(cookie_str)
             for c in json_cookies:
                 if 'name' in c and 'value' in c:
-                    cookies.append({"name": c['name'], "value": c['value'], "domain": ".amazon.in", "path": "/"})
+                    # Domain-ന് പകരം URL ഉപയോഗിക്കുന്നു (Error ഒഴിവാക്കാൻ)
+                    cookies.append({
+                        "name": str(c['name']), 
+                        "value": str(c['value']), 
+                        "url": "https://www.amazon.in"
+                    })
             return cookies
-        except: pass
+        except Exception as e:
+            print(f"JSON Parse Error: {e}")
+            
+    # പഴയ രീതിയിലുള്ള സിംഗിൾ കുക്കി ആണെങ്കിൽ
     if cookie_str.lower().startswith("cookie:"): cookie_str = cookie_str[7:]
     parts = cookie_str.split(';')
     for part in parts:
         if '=' in part:
             k, v = part.split('=', 1)
-            cookies.append({"name": k.strip(), "value": v.strip(), "domain": ".amazon.in", "path": "/"})
+            cookies.append({
+                "name": k.strip(), 
+                "value": v.strip(), 
+                "url": "https://www.amazon.in"
+            })
     return cookies
 
 async def send_telegram_alert(user_id, title, new_price, old_price, link, img_url="", mrp=0, is_mega_deal=False):
@@ -122,16 +136,14 @@ async def process_callback_cookie_tutorial(callback_query: types.CallbackQuery):
         "2. Search and install the **Cookie Editor** extension in Kiwi.\n"
         "3. Open `amazon.in`, log in to your account, and set your delivery **Pincode** at the top.\n"
         "4. Click the 3-dot menu (⋮) and open **Cookie Editor** at the bottom.\n"
-        "5. Find the cookie named `session-id`, copy its **Value**.\n"
-        "6. Paste that copied value here in the bot!\n\n"
+        "5. Click the **Export** button 📥 (it will copy all your cookies).\n"
+        "6. Paste that huge copied text here in the bot!\n\n"
         "💻 **Option 2: For PC/Laptop Users**\n"
-        "1. Open Amazon.in on Chrome/Firefox, log in, and set your Pincode.\n"
-        "2. Right-click anywhere on the page and select **Inspect** (or press F12).\n"
-        "3. Go to the **Application** tab (or **Storage** in Firefox).\n"
-        "4. On the left sidebar, expand **Cookies** and click on `https://www.amazon.in`.\n"
-        "5. In the list, find `session-id`, double-click its **Value**, and copy it.\n"
-        "6. Paste that copied value here in the bot!\n\n"
-        "*(Your session-id looks something like this: 260-1234567-8901234)*"
+        "1. Install the **Cookie Editor** extension in Chrome/Firefox.\n"
+        "2. Open Amazon.in, log in, and set your Pincode.\n"
+        "3. Click the Cookie Editor icon in your browser toolbar.\n"
+        "4. Click the **Export** button (usually at the top/bottom).\n"
+        "5. Paste that copied text here in the bot!"
     )
     await bot.send_message(callback_query.from_user.id, tutorial_msg, parse_mode="Markdown")
 
@@ -144,7 +156,7 @@ async def save_user_cookie(message: types.Message):
 async def run_scraper_loop():
     await asyncio.sleep(10) 
     
-    # സൗജന്യ ഇന്ത്യൻ പ്രോക്സി സെർവർ ലിസ്റ്റ്
+    # സൗജന്യ ഇന്ത്യൻ പ്രോക്സികൾ
     proxies = [
         "http://20.198.118.51:3128",
         "http://20.198.116.14:3128",
@@ -160,22 +172,25 @@ async def run_scraper_loop():
                 continue
 
             print(f"🔍 Scanning started for {len(users)} users...")
-            
-            # ഒരു റാൻഡം പ്രോക്സി തിരഞ്ഞെടുക്കുന്നു
             proxy = random.choice(proxies)
             print(f"🌐 Using Proxy: {proxy}")
 
             async with async_playwright() as p:
-                browser = await p.chromium.launch(
-                    headless=True, 
-                    proxy={"server": proxy}, # പ്രോക്സി ഉപയോഗിക്കുന്നു
-                    args=[
-                        '--no-sandbox', 
-                        '--disable-dev-shm-usage', 
-                        '--disable-gpu', 
-                        '--disable-blink-features=AutomationControlled'
-                    ]
-                )
+                try:
+                    browser = await p.chromium.launch(
+                        headless=True, 
+                        proxy={"server": proxy},
+                        args=[
+                            '--no-sandbox', 
+                            '--disable-dev-shm-usage', 
+                            '--disable-gpu', 
+                            '--disable-blink-features=AutomationControlled'
+                        ]
+                    )
+                except Exception as e:
+                    print(f"Proxy Connection Error: {e}")
+                    await asyncio.sleep(30)
+                    continue
                 
                 for user in users:
                     user_id = user['user_id']
