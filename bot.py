@@ -8,7 +8,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, BotCommand
 from motor.motor_asyncio import AsyncIOMotorClient
 from playwright.async_api import async_playwright
-from playwright_stealth import stealth_async
+from playwright_stealth import Stealth  # പുതിയ വെർഷൻ ഇമ്പോർട്ട്
 from aiohttp import web
 
 # ----------------- ENVIRONMENT VARIABLES -----------------
@@ -185,7 +185,9 @@ async def run_scraper_loop():
                         
                         await context.add_cookies(parsed_cookies)
                         page = await context.new_page()
-                        await stealth_async(page)
+                        
+                        # പുതിയ രീതിയിൽ Stealth Mode ആക്റ്റീവ് ആക്കുന്നു
+                        await Stealth().apply_stealth_async(page)
                         
                         for url in AMAZON_NOW_URLS:
                             try:
