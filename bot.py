@@ -8,7 +8,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, BotCommand
 from motor.motor_asyncio import AsyncIOMotorClient
 from playwright.async_api import async_playwright
-from playwright_stealth import Stealth  # പുതിയ വെർഷൻ ഇമ്പോർട്ട്
+from playwright_stealth import Stealth
 from aiohttp import web
 
 # ----------------- ENVIRONMENT VARIABLES -----------------
@@ -30,6 +30,8 @@ AMAZON_NOW_URLS = [
     "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=220619214031&title=Fruits",
     "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=218833871031&title=Vegetables"
 ]
+
+TUTORIAL_VIDEO_LINK = "https://youtu.be/YOUR_VIDEO_LINK_HERE" 
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -141,6 +143,15 @@ async def save_user_cookie(message: types.Message):
 # ----------------- BACKGROUND MULTI-USER SCRAPER -----------------
 async def run_scraper_loop():
     await asyncio.sleep(10) 
+    
+    # സൗജന്യ ഇന്ത്യൻ പ്രോക്സി സെർവർ ലിസ്റ്റ്
+    proxies = [
+        "http://20.198.118.51:3128",
+        "http://20.198.116.14:3128",
+        "http://103.111.134.195:80",
+        "http://103.88.236.4:80"
+    ]
+    
     while True:
         try:
             users = await users_collection.find({"cookie": {"$ne": None}}).to_list(length=None)
@@ -150,9 +161,14 @@ async def run_scraper_loop():
 
             print(f"🔍 Scanning started for {len(users)} users...")
             
+            # ഒരു റാൻഡം പ്രോക്സി തിരഞ്ഞെടുക്കുന്നു
+            proxy = random.choice(proxies)
+            print(f"🌐 Using Proxy: {proxy}")
+
             async with async_playwright() as p:
                 browser = await p.chromium.launch(
                     headless=True, 
+                    proxy={"server": proxy}, # പ്രോക്സി ഉപയോഗിക്കുന്നു
                     args=[
                         '--no-sandbox', 
                         '--disable-dev-shm-usage', 
@@ -185,8 +201,6 @@ async def run_scraper_loop():
                         
                         await context.add_cookies(parsed_cookies)
                         page = await context.new_page()
-                        
-                        # പുതിയ രീതിയിൽ Stealth Mode ആക്റ്റീവ് ആക്കുന്നു
                         await Stealth().apply_stealth_async(page)
                         
                         for url in AMAZON_NOW_URLS:
