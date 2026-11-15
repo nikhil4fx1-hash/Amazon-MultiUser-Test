@@ -5,9 +5,10 @@ import json
 import random
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, BotCommand
 from motor.motor_asyncio import AsyncIOMotorClient
 from playwright.async_api import async_playwright
+from playwright_stealth import stealth_async
 from aiohttp import web
 
 # ----------------- ENVIRONMENT VARIABLES -----------------
@@ -23,7 +24,11 @@ AMAZON_NOW_URLS = [
     "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=204924538031&title=Beverages",
     "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=215540425031&title=Snacks+%26+Treats",
     "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=204992653031&title=Bath+%26+Body",
-    "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=204952388031&title=Cleaners"
+    "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=204952388031&title=Cleaners",
+    "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=204952381031&title=Dishwash+%26+Detergents",
+    "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=204869998031&title=Dairy+%26+Bread",
+    "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=220619214031&title=Fruits",
+    "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=218833871031&title=Vegetables"
 ]
 
 bot = Bot(token=BOT_TOKEN)
@@ -73,24 +78,65 @@ async def send_telegram_alert(user_id, title, new_price, old_price, link, img_ur
     except: pass
 
 # ----------------- TELEGRAM BOT COMMANDS -----------------
+async def set_bot_commands():
+    commands = [BotCommand(command="start", description="Start Bot & Set Cookie")]
+    await bot.set_my_commands(commands)
+
 @dp.message(Command("start"))
 async def send_welcome(message: types.Message):
     user_id = message.from_user.id
     first_name = message.from_user.first_name
     if not await users_collection.find_one({"user_id": user_id}):
         await users_collection.insert_one({"user_id": user_id, "name": first_name, "cookie": None})
-    markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🍪 Set Location Cookie", callback_data="set_cookie")]])
-    await message.answer(f"ഹലോ {first_name}!\nAmazon Fresh/Now ലൊക്കേഷൻ ഡീലുകൾ അറിയാൻ താഴെയുള്ള ബട്ടണിൽ ക്ലിക്ക് ചെയ്ത് Cookie സെറ്റ് ചെയ്യുക.", reply_markup=markup)
+    
+    welcome_msg = (
+        f"Hello {first_name}! 👋\n\n"
+        "Welcome to the **Amazon Fresh/Now Deals Bot**.\n"
+        "To get localized alerts, please set your Amazon Location Cookie by clicking the button below."
+    )
+    
+    markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🍪 Set Location Cookie", callback_data="set_cookie")],
+        [InlineKeyboardButton(text="📖 How to get Cookie? (Guide)", callback_data="cookie_tutorial")]
+    ])
+    await message.answer(welcome_msg, reply_markup=markup, parse_mode="Markdown")
 
 @dp.callback_query(lambda c: c.data == 'set_cookie')
 async def process_callback_set_cookie(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
-    await bot.send_message(callback_query.from_user.id, "നിങ്ങളുടെ ലൊക്കേഷൻ Cookie താഴെ പേസ്റ്റ് ചെയ്യുക:")
+    msg = (
+        "👇 **Please paste your Amazon Location Cookie below:**\n\n"
+        "*(If you don't know how to extract it, click the 'How to get Cookie' button from the main menu)*"
+    )
+    await bot.send_message(callback_query.from_user.id, msg, parse_mode="Markdown")
+
+@dp.callback_query(lambda c: c.data == 'cookie_tutorial')
+async def process_callback_cookie_tutorial(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    tutorial_msg = (
+        "🍪 **How to get your Amazon Location Cookie**\n\n"
+        "📱 **Option 1: For Mobile Users (Android)**\n"
+        "1. Download **Kiwi Browser** from the Play Store.\n"
+        "2. Search and install the **Cookie Editor** extension in Kiwi.\n"
+        "3. Open `amazon.in`, log in to your account, and set your delivery **Pincode** at the top.\n"
+        "4. Click the 3-dot menu (⋮) and open **Cookie Editor** at the bottom.\n"
+        "5. Find the cookie named `session-id`, copy its **Value**.\n"
+        "6. Paste that copied value here in the bot!\n\n"
+        "💻 **Option 2: For PC/Laptop Users**\n"
+        "1. Open Amazon.in on Chrome/Firefox, log in, and set your Pincode.\n"
+        "2. Right-click anywhere on the page and select **Inspect** (or press F12).\n"
+        "3. Go to the **Application** tab (or **Storage** in Firefox).\n"
+        "4. On the left sidebar, expand **Cookies** and click on `https://www.amazon.in`.\n"
+        "5. In the list, find `session-id`, double-click its **Value**, and copy it.\n"
+        "6. Paste that copied value here in the bot!\n\n"
+        "*(Your session-id looks something like this: 260-1234567-8901234)*"
+    )
+    await bot.send_message(callback_query.from_user.id, tutorial_msg, parse_mode="Markdown")
 
 @dp.message(lambda message: message.text and ("session-id" in message.text.lower() or message.text.strip().startswith("[")))
 async def save_user_cookie(message: types.Message):
     await users_collection.update_one({"user_id": message.from_user.id}, {"$set": {"cookie": message.text}})
-    await message.answer("✅ നിങ്ങളുടെ Cookie വിജയകരമായി സെറ്റ് ചെയ്തു! സ്കാനിങ് ഉടൻ ആരംഭിക്കുന്നതായിരിക്കും.")
+    await message.answer("✅ **Your Cookie has been successfully set!**\n\nThe bot will start scanning for deals in your location shortly.", parse_mode="Markdown")
 
 # ----------------- BACKGROUND MULTI-USER SCRAPER -----------------
 async def run_scraper_loop():
@@ -102,7 +148,7 @@ async def run_scraper_loop():
                 await asyncio.sleep(60)
                 continue
 
-            print(f"🔍 {len(users)} യൂസർമാർക്കായി സ്കാനിങ് തുടങ്ങുന്നു...")
+            print(f"🔍 Scanning started for {len(users)} users...")
             
             async with async_playwright() as p:
                 browser = await p.chromium.launch(
@@ -111,8 +157,7 @@ async def run_scraper_loop():
                         '--no-sandbox', 
                         '--disable-dev-shm-usage', 
                         '--disable-gpu', 
-                        '--disable-blink-features=AutomationControlled',
-                        '--window-size=1920,1080'
+                        '--disable-blink-features=AutomationControlled'
                     ]
                 )
                 
@@ -128,33 +173,34 @@ async def run_scraper_loop():
                     try:
                         context = await browser.new_context(
                             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                            viewport={'width': 1920, 'height': 1080}
+                            viewport={'width': 1920, 'height': 1080},
+                            locale='en-IN',
+                            timezone_id='Asia/Kolkata',
+                            extra_http_headers={
+                                'Accept-Language': 'en-IN,en;q=0.9',
+                                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                                'Upgrade-Insecure-Requests': '1'
+                            }
                         )
-                        # ബോട്ട് അല്ലെന്ന് ആമസോണിനെ വിശ്വസിപ്പിക്കാനുള്ള പ്രധാന കോഡ്
-                        await context.add_init_script("""
-                            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-                        """)
-                        context.set_default_timeout(90000)
+                        
                         await context.add_cookies(parsed_cookies)
                         page = await context.new_page()
+                        await stealth_async(page)
                         
                         for url in AMAZON_NOW_URLS:
                             try:
-                                # റാൻഡം ഡിലേ നൽകുന്നു (6 മുതൽ 12 സെക്കൻഡ് വരെ)
-                                await asyncio.sleep(random.uniform(6.0, 12.0))
+                                await asyncio.sleep(random.uniform(6.0, 10.0))
+                                await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                                await asyncio.sleep(random.uniform(3.0, 5.0))
                                 
-                                await page.goto(url, wait_until="domcontentloaded")
-                                await asyncio.sleep(random.uniform(3.0, 6.0))
-                                
-                                # Oops എറർ പേജ് ആണോ എന്ന് പരിശോധിക്കുന്നു
                                 page_content = await page.content()
                                 if "rush hour and traffic is piling up" in page_content or "Oops!" in page_content:
                                     print("⚠️ Amazon Traffic Block detected! Waiting 30 seconds...")
                                     await asyncio.sleep(30)
-                                    continue # ഈ കാറ്റഗറി സ്കിപ്പ് ചെയ്ത് അടുത്തതിലേക്ക് പോകുന്നു
+                                    continue 
                                 
                                 await page.evaluate("window.scrollBy(0, 1500);")
-                                await asyncio.sleep(random.uniform(2.0, 5.0))
+                                await asyncio.sleep(random.uniform(2.0, 4.0))
                                 await page.evaluate("window.scrollBy(0, 1500);")
                                 await asyncio.sleep(3)
                                 
@@ -209,7 +255,7 @@ async def run_scraper_loop():
                                     try:
                                         screenshot_path = "debug_screenshot.png"
                                         await page.screenshot(path=screenshot_path)
-                                        await bot.send_photo(chat_id=user_id, photo=FSInputFile(screenshot_path), caption=f"⚠️ ഈ പേജിൽ പ്രൊഡക്റ്റുകൾ ലോഡ് ആയില്ല:\n{url}")
+                                        await bot.send_photo(chat_id=user_id, photo=FSInputFile(screenshot_path), caption=f"⚠️ Products did not load on this page:\n{url}")
                                     except: pass
                                 
                                 for uid, data in extracted_products.items():
@@ -260,6 +306,7 @@ async def start_web_server():
     await site.start()
 
 async def main():
+    await set_bot_commands() 
     await start_web_server()
     asyncio.create_task(run_scraper_loop())
     await dp.start_polling(bot)
