@@ -23,7 +23,7 @@ AMAZON_NOW_URLS = [
     "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=215540425031&title=Snacks+%26+Treats",
     "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=204992653031&title=Bath+%26+Body",
     "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=204952388031&title=Cleaners"
-] # സ്പീഡ് കൂട്ടാൻ നിലവിൽ 4 കാറ്റഗറി മാത്രം നൽകുന്നു, ടെസ്റ്റ് വിജയമായാൽ ബാക്കി ചേർക്കാം
+]
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -104,7 +104,11 @@ async def run_scraper_loop():
             print(f"🔍 {len(users)} യൂസർമാർക്കായി സ്കാനിങ് തുടങ്ങുന്നു...")
             
             async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--disable-extensions'])
+                # ആമസോൺ ട്രാഫിക് ബ്ലോക്ക് ഒഴിവാക്കാൻ കൂടുതൽ ഹ്യൂമൻ-ലൈക്ക് സെറ്റിങ്സ്
+                browser = await p.chromium.launch(
+                    headless=True, 
+                    args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--disable-blink-features=AutomationControlled']
+                )
                 
                 for user in users:
                     user_id = user['user_id']
@@ -116,15 +120,24 @@ async def run_scraper_loop():
                     updated_user_db = {}
                     
                     try:
-                        context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                        context.set_default_timeout(60000)
+                        context = await browser.new_context(
+                            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                            viewport={'width': 1280, 'height': 800}
+                        )
+                        context.set_default_timeout(90000)
                         await context.add_cookies(parsed_cookies)
                         page = await context.new_page()
                         
                         for url in AMAZON_NOW_URLS:
                             try:
-                                await page.goto(url, wait_until="networkidle")
-                                await page.evaluate("window.scrollBy(0, 1000);")
+                                # കൂടുതൽ സമയമെടുത്ത് പേജ് ലോഡ് ചെയ്യുന്നു
+                                await page.goto(url, wait_until="domcontentloaded")
+                                await asyncio.sleep(4)
+                                
+                                # പ്രൊഡക്റ്റുകൾ കാണാൻ പതുക്കെ താഴേക്ക് സ്ക്രോൾ ചെയ്യുന്നു
+                                await page.evaluate("window.scrollBy(0, 1500);")
+                                await asyncio.sleep(5)
+                                await page.evaluate("window.scrollBy(0, 1500);")
                                 await asyncio.sleep(3)
                                 
                                 js_script = """
@@ -174,14 +187,13 @@ async def run_scraper_loop():
                                 """
                                 extracted_products = await page.evaluate(js_script)
                                 
-                                # സ്ക്രീൻഷോട്ട് എടുക്കുന്ന ഭാഗം (ഡാറ്റ ലഭിച്ചില്ലെങ്കിൽ മാത്രം)
+                                # സ്ക്രീൻഷോട്ട് വീണ്ടും വരികയാണെങ്കിൽ അത് അയക്കുന്നു
                                 if not extracted_products:
                                     try:
                                         screenshot_path = "debug_screenshot.png"
                                         await page.screenshot(path=screenshot_path)
-                                        await bot.send_photo(chat_id=user_id, photo=FSInputFile(screenshot_path), caption=f"⚠️ ആമസോണിൽ നിന്നും ഡാറ്റ ലഭിച്ചില്ല! ബ്രൗസർ ഇപ്പോൾ കാണുന്ന പേജ് ഇതാണ്:\n{url}")
-                                    except Exception as e:
-                                        print(f"Screenshot Error: {e}")
+                                        await bot.send_photo(chat_id=user_id, photo=FSInputFile(screenshot_path), caption=f"⚠️ ഈ പേജിൽ പ്രൊഡക്റ്റുകൾ ലോഡ് ആയില്ല:\n{url}")
+                                    except: pass
                                 
                                 for uid, data in extracted_products.items():
                                     title = data['title']; new_price = data['price']; mrp = data['mrp']; link = data['link']; img_url = data['img']
@@ -209,7 +221,9 @@ async def run_scraper_loop():
                         await context.close()
                         user_price_db.update(updated_user_db)
                         await prices_collection.update_one({"user_id": user_id}, {"$set": {"products": user_price_db}}, upsert=True)
-                        await asyncio.sleep(3) 
+                        
+                        # അടുത്ത പേജിലേക്ക് പോകുന്നതിന് മുൻപ് കൂടുതൽ സമയം നൽകുന്നു (ആമസോൺ ബ്ലോക്ക് ഒഴിവാക്കാൻ)
+                        await asyncio.sleep(8) 
                     except Exception as e: print(f"User Error: {e}")
                 
                 await browser.close()
