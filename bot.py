@@ -46,33 +46,27 @@ def parse_cookie_string(cookie_str):
     cookies = []
     cookie_str = cookie_str.strip()
     
-    # JSON ഫോർമാറ്റ് ആണെങ്കിൽ (Export ചെയ്തത്)
-    if cookie_str.startswith("[") and cookie_str.endswith("]"):
+    if cookie_str.startswith("["):
         try:
             json_cookies = json.loads(cookie_str)
             for c in json_cookies:
                 if 'name' in c and 'value' in c:
-                    # Domain-ന് പകരം URL ഉപയോഗിക്കുന്നു (Error ഒഴിവാക്കാൻ)
-                    cookies.append({
-                        "name": str(c['name']), 
-                        "value": str(c['value']), 
-                        "url": "https://www.amazon.in"
-                    })
+                    cookies.append({"name": str(c['name']), "value": str(c['value']), "domain": ".amazon.in", "path": "/"})
             return cookies
         except Exception as e:
-            print(f"JSON Parse Error: {e}")
+            print(f"JSON Parse Error (Likely truncated message): {e}")
+            return [] # ക്രാഷ് ഒഴിവാക്കാൻ മുറിഞ്ഞ ഡാറ്റ തള്ളിക്കളയുന്നു
             
-    # പഴയ രീതിയിലുള്ള സിംഗിൾ കുക്കി ആണെങ്കിൽ
     if cookie_str.lower().startswith("cookie:"): cookie_str = cookie_str[7:]
     parts = cookie_str.split(';')
     for part in parts:
         if '=' in part:
             k, v = part.split('=', 1)
-            cookies.append({
-                "name": k.strip(), 
-                "value": v.strip(), 
-                "url": "https://www.amazon.in"
-            })
+            k = k.strip()
+            v = v.strip()
+            # തെറ്റായ ഡാറ്റ വന്ന് ക്രാഷ് ആകാതിരിക്കാനുള്ള സുരക്ഷ
+            if k and "{" not in k and "[" not in k and '"' not in k and " " not in k:
+                cookies.append({"name": k, "value": v, "domain": ".amazon.in", "path": "/"})
     return cookies
 
 async def send_telegram_alert(user_id, title, new_price, old_price, link, img_url="", mrp=0, is_mega_deal=False):
@@ -131,19 +125,19 @@ async def process_callback_cookie_tutorial(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
     tutorial_msg = (
         "🍪 **How to get your Amazon Location Cookie**\n\n"
-        "📱 **Option 1: For Mobile Users (Android)**\n"
-        "1. Download **Kiwi Browser** from the Play Store.\n"
-        "2. Search and install the **Cookie Editor** extension in Kiwi.\n"
-        "3. Open `amazon.in`, log in to your account, and set your delivery **Pincode** at the top.\n"
-        "4. Click the 3-dot menu (⋮) and open **Cookie Editor** at the bottom.\n"
-        "5. Click the **Export** button 📥 (it will copy all your cookies).\n"
-        "6. Paste that huge copied text here in the bot!\n\n"
-        "💻 **Option 2: For PC/Laptop Users**\n"
-        "1. Install the **Cookie Editor** extension in Chrome/Firefox.\n"
-        "2. Open Amazon.in, log in, and set your Pincode.\n"
-        "3. Click the Cookie Editor icon in your browser toolbar.\n"
-        "4. Click the **Export** button (usually at the top/bottom).\n"
-        "5. Paste that copied text here in the bot!"
+        "💻 **Option 1: Chrome/Firefox (PC/Laptop)**\n"
+        "1. Install the **Cookie Editor** extension.\n"
+        "2. Click its ⚙️ **Settings** (gear icon) at the top right.\n"
+        "3. Change the **Export format** to **Header String**.\n"
+        "4. Go to Amazon.in, log in, set your Pincode.\n"
+        "5. Click Cookie Editor and press **Export** 📥.\n"
+        "6. Paste the copied text here!\n\n"
+        "📱 **Option 2: Kiwi Browser (Mobile)**\n"
+        "1. Open Kiwi Browser, install **Cookie Editor**.\n"
+        "2. Open its Settings ⚙️ and change Export format to **Header String**.\n"
+        "3. Go to Amazon.in, log in, set Pincode.\n"
+        "4. Open Cookie Editor and click **Export** 📥.\n"
+        "5. Paste the copied text here in the bot!"
     )
     await bot.send_message(callback_query.from_user.id, tutorial_msg, parse_mode="Markdown")
 
@@ -156,7 +150,6 @@ async def save_user_cookie(message: types.Message):
 async def run_scraper_loop():
     await asyncio.sleep(10) 
     
-    # സൗജന്യ ഇന്ത്യൻ പ്രോക്സികൾ
     proxies = [
         "http://20.198.118.51:3128",
         "http://20.198.116.14:3128",
