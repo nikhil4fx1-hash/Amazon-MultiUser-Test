@@ -4,7 +4,7 @@ import html
 import json
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from motor.motor_asyncio import AsyncIOMotorClient
 from playwright.async_api import async_playwright
 from aiohttp import web
@@ -22,12 +22,8 @@ AMAZON_NOW_URLS = [
     "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=204924538031&title=Beverages",
     "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=215540425031&title=Snacks+%26+Treats",
     "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=204992653031&title=Bath+%26+Body",
-    "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=204952388031&title=Cleaners",
-    "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=204952381031&title=Dishwash+%26+Detergents",
-    "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=204869998031&title=Dairy+%26+Bread",
-    "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=220619214031&title=Fruits",
-    "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=218833871031&title=Vegetables"
-]
+    "https://www.amazon.in/tez/browse/explore/collection?qcbrand=qqfsWw9RkO&nodeId=204952388031&title=Cleaners"
+] # സ്പീഡ് കൂട്ടാൻ നിലവിൽ 4 കാറ്റഗറി മാത്രം നൽകുന്നു, ടെസ്റ്റ് വിജയമായാൽ ബാക്കി ചേർക്കാം
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -38,11 +34,9 @@ users_collection = db['users']
 prices_collection = db['prices']
 
 # ----------------- HELPER FUNCTIONS -----------------
-
 def parse_cookie_string(cookie_str):
     cookies = []
     cookie_str = cookie_str.strip()
-    
     if cookie_str.startswith("[") and cookie_str.endswith("]"):
         try:
             json_cookies = json.loads(cookie_str)
@@ -50,12 +44,8 @@ def parse_cookie_string(cookie_str):
                 if 'name' in c and 'value' in c:
                     cookies.append({"name": c['name'], "value": c['value'], "domain": ".amazon.in", "path": "/"})
             return cookies
-        except Exception as e:
-            print(f"JSON Cookie Parse Error: {e}")
-            
-    if cookie_str.lower().startswith("cookie:"):
-        cookie_str = cookie_str[7:]
-        
+        except: pass
+    if cookie_str.lower().startswith("cookie:"): cookie_str = cookie_str[7:]
     parts = cookie_str.split(';')
     for part in parts:
         if '=' in part:
@@ -69,48 +59,27 @@ async def send_telegram_alert(user_id, title, new_price, old_price, link, img_ur
     
     if is_mega_deal:
         discount_pct = round(((mrp - new_price) / mrp) * 100) if mrp > 0 else 50
-        message = (
-            f"🔥 <b>MEGA DISCOUNT (50%+ OFF)</b> 🔥\n\n"
-            f"📦 {safe_title}\n"
-            f"💰 Deal Price: <b>₹{new_price}</b>\n"
-            f"❌ MRP: <s>₹{mrp}</s>\n"
-            f"🏷️ Discount: <b>{discount_pct}% OFF</b>\n\n"
-            f"🔗 🛒 <a href='{safe_link}'>Grab it Fast!</a>"
-        )
+        message = f"🔥 <b>MEGA DISCOUNT (50%+ OFF)</b> 🔥\n\n📦 {safe_title}\n💰 Deal Price: <b>₹{new_price}</b>\n❌ MRP: <s>₹{mrp}</s>\n🏷️ Discount: <b>{discount_pct}% OFF</b>\n\n🔗 🛒 <a href='{safe_link}'>Grab it Fast!</a>"
     else:
         drop_amount = round(old_price - new_price, 2)
-        message = (
-            f"📉 <b>PRICE DROP ALERT</b> 📉\n\n"
-            f"📦 {safe_title}\n"
-            f"💰 New Price: <b>₹{new_price}</b> (Dropped by ₹{drop_amount})\n"
-            f"❌ Old Price: <s>₹{old_price}</s>\n\n"
-            f"🔗 🛒 <a href='{safe_link}'>Grab it Fast!</a>"
-        )
+        message = f"📉 <b>PRICE DROP ALERT</b> 📉\n\n📦 {safe_title}\n💰 New Price: <b>₹{new_price}</b> (Dropped by ₹{drop_amount})\n❌ Old Price: <s>₹{old_price}</s>\n\n🔗 🛒 <a href='{safe_link}'>Grab it Fast!</a>"
     
     try:
         if img_url and img_url.startswith('http'):
             await bot.send_photo(chat_id=user_id, photo=img_url, caption=message, parse_mode="HTML")
         else:
-            await bot.send_message(chat_id=user_id, text=message, parse_mode="HTML", disable_web_page_preview=False)
-    except Exception:
-        try:
-            await bot.send_message(chat_id=user_id, text=message, parse_mode="HTML", disable_web_page_preview=False)
-        except: pass
+            await bot.send_message(chat_id=user_id, text=message, parse_mode="HTML")
+    except: pass
 
 # ----------------- TELEGRAM BOT COMMANDS -----------------
-
 @dp.message(Command("start"))
 async def send_welcome(message: types.Message):
     user_id = message.from_user.id
     first_name = message.from_user.first_name
-    
-    user_exists = await users_collection.find_one({"user_id": user_id})
-    if not user_exists:
+    if not await users_collection.find_one({"user_id": user_id}):
         await users_collection.insert_one({"user_id": user_id, "name": first_name, "cookie": None})
-    
-    welcome_text = f"ഹലോ {first_name}!\nAmazon Fresh/Now ലൊക്കേഷൻ ഡീലുകൾ അറിയാൻ താഴെയുള്ള ബട്ടണിൽ ക്ലിക്ക് ചെയ്ത് Cookie സെറ്റ് ചെയ്യുക."
     markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🍪 Set Location Cookie", callback_data="set_cookie")]])
-    await message.answer(welcome_text, reply_markup=markup)
+    await message.answer(f"ഹലോ {first_name}!\nAmazon Fresh/Now ലൊക്കേഷൻ ഡീലുകൾ അറിയാൻ താഴെയുള്ള ബട്ടണിൽ ക്ലിക്ക് ചെയ്ത് Cookie സെറ്റ് ചെയ്യുക.", reply_markup=markup)
 
 @dp.callback_query(lambda c: c.data == 'set_cookie')
 async def process_callback_set_cookie(callback_query: types.CallbackQuery):
@@ -119,37 +88,27 @@ async def process_callback_set_cookie(callback_query: types.CallbackQuery):
 
 @dp.message(lambda message: message.text and ("session-id" in message.text.lower() or message.text.strip().startswith("[")))
 async def save_user_cookie(message: types.Message):
-    user_id = message.from_user.id
-    cookie_data = message.text
-    await users_collection.update_one({"user_id": user_id}, {"$set": {"cookie": cookie_data}})
+    await users_collection.update_one({"user_id": message.from_user.id}, {"$set": {"cookie": message.text}})
     await message.answer("✅ നിങ്ങളുടെ Cookie വിജയകരമായി സെറ്റ് ചെയ്തു! സ്കാനിങ് ഉടൻ ആരംഭിക്കുന്നതായിരിക്കും.")
 
-
 # ----------------- BACKGROUND MULTI-USER SCRAPER -----------------
-
 async def run_scraper_loop():
     await asyncio.sleep(10) 
-    
     while True:
         try:
             users = await users_collection.find({"cookie": {"$ne": None}}).to_list(length=None)
             if not users:
-                print("കുക്കി നൽകിയ യൂസർമാർ ആരുമില്ല. 1 മിനിറ്റ് കാത്തിരിക്കുന്നു...")
                 await asyncio.sleep(60)
                 continue
 
             print(f"🔍 {len(users)} യൂസർമാർക്കായി സ്കാനിങ് തുടങ്ങുന്നു...")
             
             async with async_playwright() as p:
-                browser = await p.chromium.launch(
-                    headless=True, 
-                    args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--disable-extensions']
-                )
+                browser = await p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--disable-extensions'])
                 
                 for user in users:
                     user_id = user['user_id']
-                    cookie_text = user['cookie']
-                    parsed_cookies = parse_cookie_string(cookie_text)
+                    parsed_cookies = parse_cookie_string(user['cookie'])
                     if not parsed_cookies: continue
 
                     user_db_record = await prices_collection.find_one({"user_id": user_id})
@@ -166,7 +125,7 @@ async def run_scraper_loop():
                             try:
                                 await page.goto(url, wait_until="networkidle")
                                 await page.evaluate("window.scrollBy(0, 1000);")
-                                await asyncio.sleep(2)
+                                await asyncio.sleep(3)
                                 
                                 js_script = """
                                 () => {
@@ -193,10 +152,6 @@ async def run_scraper_loop():
                                             if(lines[i].length > 7) { title = lines[i]; titleIndex = i; break; }
                                         }
                                         if (title) {
-                                            if(titleIndex !== -1 && titleIndex + 1 < lines.length) {
-                                                let nextLine = lines[titleIndex + 1];
-                                                if(nextLine.length > 1 && nextLine.length < 15 && !nextLine.includes('₹') && !nextLine.includes('%')) title = title + " (" + nextLine + ")";
-                                            }
                                             let imgNode = null; let searchNode = card;
                                             for(let i=0; i<4; i++) {
                                                 if(!searchNode) break;
@@ -218,6 +173,15 @@ async def run_scraper_loop():
                                 }
                                 """
                                 extracted_products = await page.evaluate(js_script)
+                                
+                                # സ്ക്രീൻഷോട്ട് എടുക്കുന്ന ഭാഗം (ഡാറ്റ ലഭിച്ചില്ലെങ്കിൽ മാത്രം)
+                                if not extracted_products:
+                                    try:
+                                        screenshot_path = "debug_screenshot.png"
+                                        await page.screenshot(path=screenshot_path)
+                                        await bot.send_photo(chat_id=user_id, photo=FSInputFile(screenshot_path), caption=f"⚠️ ആമസോണിൽ നിന്നും ഡാറ്റ ലഭിച്ചില്ല! ബ്രൗസർ ഇപ്പോൾ കാണുന്ന പേജ് ഇതാണ്:\n{url}")
+                                    except Exception as e:
+                                        print(f"Screenshot Error: {e}")
                                 
                                 for uid, data in extracted_products.items():
                                     title = data['title']; new_price = data['price']; mrp = data['mrp']; link = data['link']; img_url = data['img']
@@ -250,31 +214,23 @@ async def run_scraper_loop():
                 
                 await browser.close()
                 
-        except Exception as e:
-            print(f"⚠️ Critical Loop Error: {e}")
-            
-        print("✅ അടുത്ത സ്കാനിങ്ങിനായി കാത്തിരിക്കുന്നു...")
+        except Exception as e: print(f"⚠️ Critical Loop Error: {e}")
         await asyncio.sleep(900)
 
-# ----------------- WEB SERVER (To Keep Render Awake) -----------------
+# ----------------- WEB SERVER -----------------
 async def handle_ping(request):
-    return web.Response(text="Bot is awake and running!")
+    return web.Response(text="Bot is awake!")
 
 async def start_web_server():
     app = web.Application()
     app.router.add_get('/', handle_ping)
     runner = web.AppRunner(app)
     await runner.setup()
-    
     port = int(os.environ.get("PORT", 10000))
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-    print(f"🌐 Web server started on port {port}")
 
-
-# ----------------- MAIN ENTRY POINT -----------------
 async def main():
-    print("🤖 Multi-User Bot is starting...")
     await start_web_server()
     asyncio.create_task(run_scraper_loop())
     await dp.start_polling(bot)
